@@ -42,16 +42,16 @@ public class ECCTest {
 
 	public static void main(String args[]) throws Exception {
 		Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
-
-		ks = loadKeyStore();
-
+		initializeKeyPairGenerator();
 		initializeCipher();
 
+		ks = loadKeyStore();
+		
 		String plainText = "Look mah, I'm a message!";
 		System.out.println("Original plaintext message: " + plainText);
 
 		KeyPair keyPairLocal = loadKeysFromKeyStore();
-		initializeKeyPairGenerator();
+	
 		if (keyPairLocal == null) {
 			keyPairLocal = generateECKeys();
 			saveKeysToKeyStore(keyPairLocal);
@@ -59,48 +59,41 @@ public class ECCTest {
 
 		exportPublicKey(keyPairLocal.getPublic());
 
-		// KeyPair keyPairRemote = generateECKeys();
-		// PublicKey remotePublicKey = keyPairRemote.getPublic();
 		PublicKey remotePublicKey = loadRemotePublicKey(
-				"MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAExh7rmcy953QWIZ8vBmX3i8FpOBpuowWH3ajuQ8yoSol0aEC3XT4tFD26TjP7yMW+yTTpPkWCCC3h+McsGW9dMwzXeU8zKFuSOXxhSiQA0EF5jmHshFLbUCuE4QpdarKB");
+				"MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAE6rqe7lvKLG03RT6vFbA20eXJfNPz2uVM70jzajraop0TJVf/2HyZ+js+0e5EtCjd8Sh+2W0LweFr+6yHVaueJ0uWZoqCISkbqPoP3ozcur7wf7Ms9ami36n2B3Pstjmy");
 
 		SecretKey secretKeyLocal = deriveSecretKey(keyPairLocal.getPrivate(), remotePublicKey);
 		System.out.println("secretKeyLocal: " + secretKeyLocal.getAlgorithm() + " format: " + secretKeyLocal.getFormat()
 				+ " ENcoded: " + base64Encode(secretKeyLocal.getEncoded()));
-		// SecretKey secretKeyRemote = deriveSecretKey(keyPairRemote.getPrivate(),
-		// keyPairLocal.getPublic());
 
-		// Encrypt the message using 'secretKeyLocal'
+		encryptUsingSecretLocal(plainText, secretKeyLocal);
+		
+		String ivAndCipherTextAsBase64 = "MSwA/CujkvErhOpHlB6r/g==f8dmHL4ZLoP7GWcM+H8kX9KLZ5YZ4Gw2/ZOISbWZZuotmXTRsPS6FzY=";
+		decryptUsingRemotePublicKey(secretKeyLocal, ivAndCipherTextAsBase64);
+	}
+
+
+	private static void encryptUsingSecretLocal(String plainText, SecretKey secretKeyLocal) throws Exception {
 		byte[] iv = new SecureRandom().generateSeed(IV_LENGTH);
 		String cipherText = encryptString(secretKeyLocal, iv, plainText);
 		String ivBase64 = base64Encode(iv);
-		System.out.println("Encrypted cipher text:|" + ivBase64 + cipherText + "|");
-
-		// Decrypt the message using 'secretKeyRemote'
-		String ivAndCipherTextAsBase64 = "Qk2fruozB9s3UyWB2UQ9og==iqBC2AL6O7jsK1NCTTQpjlFTwwGqmUlZF7gpRPlSBC41zzQbIoVFGN78gA==";
-		String ivAsBase64 = ivAndCipherTextAsBase64.substring(0, VI_BASE64_LENGTH);
-		byte[] remoteIv = base64Decode(ivAsBase64);
-		cipherText = ivAndCipherTextAsBase64.substring(VI_BASE64_LENGTH);
-		String decryptedPlainText = decryptString(secretKeyLocal, remoteIv, cipherText);
-		System.out.println("Decrypted cipher text: " + decryptedPlainText);
+		System.out.println("Encrypted cipher text: " + ivBase64 + cipherText);
 	}
+
 
 	private static String exportPublicKey(PublicKey publicKey) {
 		String format = publicKey.getFormat();
 		byte[] en = publicKey.getEncoded();
 
-		System.out.println("Pub Key Format: " + format);
-		System.out.println("Pub Key Base 64: " + base64Encode(en));
+		System.out.println("Public Key Format: " + format);
+		System.out.println("Copy to remote app Publick Key Base64: " + base64Encode(en));
 
 		return base64Encode(en);
-
 	}
 
 	private static PublicKey loadRemotePublicKey(String base64EncodedPublicKey) throws Exception {
-
 		PublicKey publicKey = KeyFactory.getInstance("EC", "SunEC")
 				.generatePublic(new X509EncodedKeySpec(base64Decode(base64EncodedPublicKey)));
-
 		return publicKey;
 	}
 
@@ -125,7 +118,6 @@ public class ECCTest {
 		PublicKey pubKeyU = kpU.getPublic();
 		System.out.println("User priv: " + privKeyU.toString());
 		System.out.println("User pub: " + pubKeyU.toString());
-
 		return kpU;
 	}
 
@@ -140,7 +132,6 @@ public class ECCTest {
 	}
 
 	public static String encryptString(SecretKey key, byte[] iv, String plainText) throws Exception {
-
 		IvParameterSpec ivSpec = new IvParameterSpec(iv);
 
 		byte[] plainTextBytes = plainText.getBytes("UTF-8");
@@ -150,7 +141,6 @@ public class ECCTest {
 		cipherText = new byte[cipher.getOutputSize(plainTextBytes.length)];
 
 		int encryptLength = cipher.update(plainTextBytes, 0, plainTextBytes.length, cipherText, 0);
-
 		encryptLength += cipher.doFinal(cipherText, encryptLength);
 
 		return base64Encode(cipherText);
@@ -231,5 +221,21 @@ public class ECCTest {
 		}
 		return null;
 	}
+	
 
+	private static void decryptUsingRemotePublicKey(SecretKey secretKeyLocal, String ivAndCipherTextAsBase64) throws Exception {
+		try {
+		String ivAsBase64 = ivAndCipherTextAsBase64.substring(0, VI_BASE64_LENGTH);
+		byte[] remoteIv = base64Decode(ivAsBase64);
+		String cipherText = ivAndCipherTextAsBase64.substring(VI_BASE64_LENGTH);
+		String decryptedPlainText = decryptString(secretKeyLocal, remoteIv, cipherText);
+		System.out.println("Decrypted cipher text: " + decryptedPlainText);
+		}catch(javax.crypto.AEADBadTagException e) {
+			System.out.println("Exception while decrypting. Please check if remote public key and ciphertext was generated correctly using: "
+					+ "Public key from this appication, private key of remote applciation.");
+			throw e;
+		}
+	}
+	
+	
 }
