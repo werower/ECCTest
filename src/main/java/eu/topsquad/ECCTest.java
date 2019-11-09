@@ -69,7 +69,9 @@ public class ECCTest {
 		encryptUsingSecretLocal(plainText, secretKeyLocal);
 		
 		String ivAndCipherTextAsBase64 = "MSwA/CujkvErhOpHlB6r/g==f8dmHL4ZLoP7GWcM+H8kX9KLZ5YZ4Gw2/ZOISbWZZuotmXTRsPS6FzY=";
-		decryptUsingRemotePublicKey(secretKeyLocal, ivAndCipherTextAsBase64);
+		// Because first time you run this app you don't have your local KeyPair remote public Key and above encrypted text is wrong.
+		// uncomment decription when you get public key and encrypted text 
+		//decryptUsingRemotePublicKey(secretKeyLocal, ivAndCipherTextAsBase64);
 	}
 
 

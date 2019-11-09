@@ -1,0 +1,312 @@
+<html>
+<script>
+  const VI_LENGTH = 16;
+  const VI_BASE64_LENGTH = Math.ceil(VI_LENGTH*8 / 24) * 4;
+
+  document.addEventListener("DOMContentLoaded", function() {
+      "use strict";
+      if (!window.crypto || !window.crypto.subtle) {
+          alert("Your current browser does not support the Web Cryptography API! This page will not work.");
+          return;
+      }
+      if (!window.indexedDB) {
+          alert("Your current browser does not support IndexedDB. This page will not work.");
+          return;
+      }
+      // All the work happens here.
+    }
+  )
+
+  function createIndexedDB(){
+    console.log("create Indexed DB");
+  	// This works on all devices/browsers, and uses IndexedDBShim as a final fallback
+  	var indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB || window.shimIndexedDB;
+
+  	// Open (or create) the database
+  	var open = indexedDB.open("S2C_db", 1);
+
+  	// Create the schema
+  	open.onupgradeneeded = function() {
+  	    db = open.result;
+  	    var store = db.createObjectStore("S2C_store", {keyPath: "id"});
+  	};
+
+  	open.onsuccess = function() {
+  	    // Start a new transaction
+  	    db = open.result;
+        note.innerHTML += '<li>Database opened</li>';
+  	}
+
+    open.onerror = function(event) {
+      note.innerHTML += '<li>Error loading database.</li>';
+    };
+  }
+
+
+ function generateKey(){
+     return window.crypto.subtle.generateKey(
+        {
+          name: "ECDH",
+          namedCurve: "P-384"
+        },
+        false,
+        ["deriveKey"]
+      );
+  }
+
+  async function generateKeyPair(){
+      keyPair = await generateKey()
+      console.log("keyPair:", keyPair);
+  }
+
+  async function generateRemoteKeyPair(){
+      let remoteKeyPair = await generateKey()
+      document.getElementById("remotePublicKey").value = await exportKey(remoteKeyPair.publicKey)
+      console.log("Remote Key Pair:", remoteKeyPair);
+  }
+
+  async function exportKey(publicKey){
+      let publicKeyRaw = await window.crypto.subtle.exportKey(
+          "spki",
+          publicKey
+      );
+      return arrayBufferToBase64(publicKeyRaw)
+  }
+
+  async function exportPublicKey(){
+      exportedPublicKey = await exportKey(keyPair.publicKey)
+      console.log("exportedPublicKey: "+ exportedPublicKey);
+      document.getElementById("exportedPublicKey").innerHTML = exportedPublicKey
+  }
+
+
+  function importKey(base64PublicKey){
+      let  decodedPublicKey = base64ToArrayBuffer(base64PublicKey)
+      return window.crypto.subtle.importKey(
+          'spki',
+           decodedPublicKey,
+           {
+             name: "ECDH",
+             namedCurve: "P-384"
+           },
+           true,
+           []
+        );
+  }
+
+
+  function storeKeys(){
+    console.log("storeKeys");
+    var tx = db.transaction("S2C_store", "readwrite");
+    var store = tx.objectStore("S2C_store");
+    store.put({id:1, keys: keyPair});
+  }
+
+  function loadKeys(){
+    var tx = db.transaction("S2C_store", "readwrite");
+    var store = tx.objectStore("S2C_store");
+
+    var getData = store.get(1);
+    getData.onsuccess = async function() {
+       loadedKeys = getData.result.keys;
+       console.log("loadedKeys", loadedKeys);
+    };
+  }
+
+  async function exportLoadedPublicKey(){
+    exportedLoadedPublicKey = await exportKey(loadedKeys.publicKey)
+    console.log("exportedLoadedPublicKey: ", exportedLoadedPublicKey);
+    document.getElementById("exportedLoadedPublicKey").innerHTML = exportedLoadedPublicKey
+  }
+
+
+
+/*
+Derive an AES key, given:
+- our ECDH private key
+- their ECDH public key
+*/
+function deriveSecretKey(privateKey, publicKey) {
+  return window.crypto.subtle.deriveKey(
+    {
+      name: "ECDH",
+      public: publicKey
+    },
+    privateKey,
+    {
+      name: "AES-GCM",
+      length: 256
+    },
+    true,
+    ["encrypt", "decrypt",]
+  );
+}
+
+
+  function encrypt(secretKey, iv, text) {
+    let enc = new TextEncoder();
+    let encodedMessage = enc.encode(text);
+    return window.crypto.subtle.encrypt(
+      {
+        name: "AES-GCM",
+        iv: iv
+      },
+      secretKey,
+      encodedMessage
+    );
+  }
+
+  async function decrypt(secretKey, iv, ciphertext) {
+    try {
+      let decrypted = await window.crypto.subtle.decrypt(
+        {
+          name: "AES-GCM",
+          iv: iv
+        },
+        secretKey,
+        ciphertext
+      );
+
+      let dec = new TextDecoder();
+      return dec.decode(decrypted);
+    } catch (e) {
+      console.log("Error", e.stack);
+      console.log("Error", e.name);
+      console.log("Error", e.message);
+      note.innerHTML = "*** Decryption error ***";
+    }
+  }
+
+
+ async function encryptMessage(){
+   try{
+     let remotePubKey = document.getElementById("remotePublicKey").value
+     let importedRemotePubKey = await importKey(remotePubKey)
+
+     let secretKey = await deriveSecretKey(loadedKeys.privateKey, importedRemotePubKey);
+     let message = document.getElementById("textToCipher").value;
+
+     let iv = window.crypto.getRandomValues(new Uint8Array(VI_LENGTH));
+     let ciphertext = await encrypt(secretKey, iv, message);
+
+     let ivAsBase64 = arrayBufferToBase64(iv.buffer)
+     let ciphertextAsBase64 = arrayBufferToBase64(ciphertext)
+
+     console.log("IV as Base64: ", ivAsBase64)
+     console.log("ciphertext as Base64: ", ciphertextAsBase64);
+     document.getElementById("cipherText").value = ivAsBase64+ciphertextAsBase64
+   } catch (e) {
+     console.log("Error", e.stack);
+     console.log("Error", e.name);
+     console.log("Error", e.message);
+     note.innerHTML = "*** Encryption error ***";
+   }
+ }
+
+
+ async function exportSymetricKey(symetricKey){
+     let symetricKeyRaw = await window.crypto.subtle.exportKey(
+         "raw",
+         symetricKey
+     );
+     return arrayBufferToBase64(symetricKeyRaw)
+ }
+
+ async function decryptMessage(){
+   let ivAndCipherTextAsBase64 = document.getElementById("cipherText").value
+   let ivAsBase64 = ivAndCipherTextAsBase64.substring(0, VI_BASE64_LENGTH)
+   let iv = new Uint8Array(base64ToArrayBuffer(ivAsBase64))
+
+   let ciphertextAsBase64 = ivAndCipherTextAsBase64.substring(VI_BASE64_LENGTH)
+   let ciphertext = base64ToArrayBuffer(ciphertextAsBase64)
+
+   let remotePubKeyAsBase64 = document.getElementById("remotePublicKey").value
+   let importedRemotePubKey = await importKey(remotePubKeyAsBase64)
+
+   let secretKey = await deriveSecretKey(loadedKeys.privateKey, importedRemotePubKey);
+   exportedSecretKey = await exportSymetricKey(secretKey);
+
+   console.log("secretKey: ", secretKey);
+   console.log("exportedSecretKey: ", exportedSecretKey);
+   let decrypted = await decrypt(secretKey, iv, ciphertext )
+   document.getElementById("decodedMessage").innerHTML = decrypted;
+  }
+
+
+  function arrayBufferToBase64( buffer ) {
+  	var binary = '';
+  	var bytes = new Uint8Array( buffer );
+  	var len = bytes.byteLength;
+  	for (var i = 0; i < len; i++) {
+  		binary += String.fromCharCode( bytes[ i ] );
+  	}
+  	return window.btoa( binary );
+  }
+
+  function base64ToArrayBuffer(base64) {
+      var binary_string =  window.atob(base64);
+      var len = binary_string.length;
+      var bytes = new Uint8Array( len );
+      for (var i = 0; i < len; i++)        {
+          bytes[i] = binary_string.charCodeAt(i);
+      }
+      return bytes.buffer;
+  }
+
+
+  createIndexedDB();
+</script>
+
+<body>
+<p>To see more details please go to: <a href="https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/deriveKey">https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/deriveKey</a>
+<p>How to cope with IndexedDB: <a href="https://gist.github.com/saulshanabrook/b74984677bccd08b028b30d9968623f5">https://gist.github.com/saulshanabrook/b74984677bccd08b028b30d9968623f5</a>
+<p>
+
+<p>
+<input type="button" value="Generate Key Pair" onclick ="generateKeyPair()" />
+<button onclick="exportPublicKey()">Export Public Key</button>
+<p>
+Exported Public Key Base64: <pre id="exportedPublicKey"></pre >
+</p>
+<button onclick="storeKeys()">Store Key Pair</button>
+<button onclick="loadKeys()">Load Key Pair</button>
+
+<button onclick="exportLoadedPublicKey()">Export Loaded Public Key</button>
+<p>
+Exported and Encoded Loaded Public Key Base64: <pre id="exportedLoadedPublicKey"></pre >
+</p>
+
+<button onclick="generateRemoteKeyPair()">Generate Remote Key Pair</button>
+<p>
+<div>
+  <label for="ecdh-message">Remote public Key:</label>
+ <input type="text" id="remotePublicKey"  size="25"
+              value="Enter Remote public Key">
+</div>
+<p>
+
+<p>
+<div>
+  <label for="ecdh-message">Enter a message to encrypt:</label>
+  <input type="text" id="textToCipher"  size="25"
+         value="The bunny hops at teatime">
+</div>
+<p>
+<button onclick="encryptMessage()">Encrypt</button>
+</p>
+<div>
+  <label for="ecdh-message">Encrypted Message:</label>
+  <input type="text" id="cipherText"  size="25"
+         value="">
+</div>
+<p>
+<button onclick="decryptMessage()">Decrypt</button>
+<p>
+Decrypted Message: <pre id="decodedMessage"></pre >
+</p>
+
+<p>
+<span id="note"></span>
+</p>
+
+</body>
